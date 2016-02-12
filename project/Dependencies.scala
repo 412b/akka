@@ -15,11 +15,11 @@ object Dependencies {
     crossScalaVersions := Seq("2.11.7"), // "2.12.0-M3"
     scalaVersion := crossScalaVersions.value.head,
     scalaStmVersion := sys.props.get("akka.build.scalaStmVersion").getOrElse("0.7"),
-    scalaCheckVersion := sys.props.get("akka.build.scalaCheckVersion").getOrElse("1.11.6"),
+    scalaCheckVersion := sys.props.get("akka.build.scalaCheckVersion").getOrElse("1.13.0"),
     scalaTestVersion := (
       if (scalaVersion.value == "2.12.0-M2") "2.2.5-M2"
       else if (scalaVersion.value == "2.12.0-M3") "2.2.5-M3"
-      else "2.2.4"
+      else "2.2.6"
     )
   )
 
@@ -30,10 +30,10 @@ object Dependencies {
 
     // when updating config version, update links ActorSystem ScalaDoc to link to the updated version
     val config        = "com.typesafe"                % "config"                       % "1.3.0"       // ApacheV2
-    val netty         = "io.netty"                    % "netty"                        % "3.10.3.Final" // ApacheV2
+    val netty         = "io.netty"                    % "netty"                        % "3.10.5.Final" // ApacheV2
     val scalaStm      = Def.setting { "org.scala-stm" %% "scala-stm" % scalaStmVersion.value } // Modified BSD (Scala)
 
-    val scalaXml      = "org.scala-lang.modules"      %% "scala-xml"                   % "1.0.1" // Scala License
+    val scalaXml      = "org.scala-lang.modules"      %% "scala-xml"                   % "1.0.5" // Scala License
     val scalaReflect  = ScalaVersionDependentModuleID.versioned("org.scala-lang" % "scala-reflect" % _) // Scala License
 
     val slf4jApi      = "org.slf4j"                   % "slf4j-api"                    % "1.7.16"       // MIT
@@ -140,7 +140,7 @@ object Dependencies {
 
   val agent = l ++= Seq(scalaStm.value, Test.scalatest.value, Test.junit)
 
-  val persistence = l ++= Seq(Provided.levelDB, Provided.levelDBNative, Test.scalatest.value, Test.junit, Test.commonsIo, Test.scalaXml)
+  val persistence = l ++= Seq(Provided.levelDB, Provided.levelDBNative, Test.scalatest.value, Test.junit, Test.commonsIo, Test.commonsCodec, Test.scalaXml)
 
   val persistenceQuery = l ++= Seq(Test.scalatest.value, Test.junit, Test.commonsIo)
 
