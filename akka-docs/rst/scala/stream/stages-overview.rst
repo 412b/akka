@@ -1,4 +1,4 @@
-.. _stages-overview:
+.. _stages-overview_scala:
 
 Overview of built-in stages and their semantics
 ===============================================
@@ -17,7 +17,7 @@ for each materialization, which is the reason the method takes a function rather
 
 If the iterator perform blocking operations, make sure to run it on a separate dispatcher.
 
-*emits* the next value returned from the iterator
+***emits*** the next value returned from the iterator
 
 *completes* when the iterator reaches its end
 
@@ -423,7 +423,7 @@ Simple processing stages
 These stages can transform the rate of incoming elements since there are stages that emit multiple elements for a
 single input (e.g. `mapConcat') or consume multiple elements before emitting one output (e.g. ``filter``).
 However, these rate transformations are data-driven, i.e. it is the incoming elements that define how the
-rate is affected. This is in contrast with :ref:`detached-stages-overview` which can change their processing behavior
+rate is affected. This is in contrast with :ref:`detached-stages-overview_scala` which can change their processing behavior
 depending on being backpressured by downstream or not.
 
 map
@@ -439,6 +439,17 @@ Transform each element in the stream by calling a mapping function with it and p
 mapConcat
 ^^^^^^^^^
 Transform each element into zero or more elements that are individually passed downstream.
+
+*emits* when the mapping function returns an element or there are still remaining elements from the previously calculated collection
+
+*backpressures* when downstream backpressures or there are still available elements from the previously calculated collection
+
+*completes* when upstream completes and all remaining elements has been emitted
+
+statefulMapConcat
+^^^^^^^^^^^^^^^^^
+Transform each element into zero or more elements that are individually passed downstream. The difference to ``mapConcat`` is that
+the transformation function is created from a factory for every materialization of the flow.
 
 *emits* when the mapping function returns an element or there are still remaining elements from the previously calculated collection
 
@@ -698,7 +709,7 @@ Delay every element passed through with a specific duration.
 
 
 
-.. _detached-stages-overview:
+.. _detached-stages-overview_scala:
 
 Backpressure aware stages
 -------------------------

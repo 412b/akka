@@ -434,7 +434,7 @@ Simple processing stages
 These stages can transform the rate of incoming elements since there are stages that emit multiple elements for a
 single input (e.g. `mapConcat') or consume multiple elements before emitting one output (e.g. ``filter``).
 However, these rate transformations are data-driven, i.e. it is the incoming elements that define how the
-rate is affected. This is in contrast with :ref:`detached-stages-overview` which can change their processing behavior
+rate is affected. This is in contrast with :ref:`detached-stages-overview_java` which can change their processing behavior
 depending on being backpressured by downstream or not.
 
 map
@@ -450,6 +450,17 @@ Transform each element in the stream by calling a mapping function with it and p
 mapConcat
 ^^^^^^^^^
 Transform each element into zero or more elements that are individually passed downstream.
+
+*emits* when the mapping function returns an element or there are still remaining elements from the previously calculated collection
+
+*backpressures* when downstream backpressures or there are still available elements from the previously calculated collection
+
+*completes* when upstream completes and all remaining elements has been emitted
+
+statefulMapConcat
+^^^^^^^^^^^^^^^^^
+Transform each element into zero or more elements that are individually passed downstream. The difference to ``mapConcat`` is that
+the transformation function is created from a factory for every materialization of the flow.
 
 *emits* when the mapping function returns an element or there are still remaining elements from the previously calculated collection
 
@@ -641,7 +652,7 @@ that triggered them.
 
 If a CompletionStage fails, the stream also fails (unless a different supervision strategy is applied)
 
-*emits* any of the ``CompletionStage` s returned by the provided function complete
+*emits* any of the ``CompletionStage`` s returned by the provided function complete
 
 *backpressures* when the number of ``CompletionStage`` s reaches the configured parallelism and the downstream backpressures
 
@@ -707,7 +718,7 @@ Delay every element passed through with a specific duration.
 *completes* when upstream completes and buffered elements has been drained
 
 
-.. _detached-stages-overview:
+.. _detached-stages-overview_java:
 
 Backpressure aware stages
 -------------------------
