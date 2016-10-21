@@ -6,6 +6,7 @@ package akka.stream.scaladsl
 import akka.stream.ActorMaterializer
 import akka.stream.impl.JsonObjectParser
 import akka.stream.scaladsl.Framing.FramingException
+import akka.stream.testkit.{ TestPublisher, TestSubscriber }
 import akka.stream.testkit.scaladsl.TestSink
 import akka.testkit.AkkaSpec
 import akka.util.ByteString
@@ -116,6 +117,34 @@ class JsonFramingSpec extends AkkaSpec {
           |}""".stripMargin,
         """{ "name": "jack"}""")
     }
+
+    "emit all elements after input completes" in {
+      // coverage for #21150
+      val input = TestPublisher.probe[ByteString]()
+      val output = TestSubscriber.probe[String]()
+
+      val result = Source.fromPublisher(input)
+        .via(JsonFraming.objectScanner(Int.MaxValue))
+        .map(_.utf8String)
+        .runWith(Sink.fromSubscriber(output))
+
+      output.request(1)
+      input.expectRequest()
+      input.sendNext(ByteString("""[{"a":0}, {"b":1}, {"c":2}, {"d":3}, {"e":4}]"""))
+      input.sendComplete()
+      Thread.sleep(10) // another of those races, we don't know the order of next and complete
+      output.expectNext("""{"a":0}""")
+      output.request(1)
+      output.expectNext("""{"b":1}""")
+      output.request(1)
+      output.expectNext("""{"c":2}""")
+      output.request(1)
+      output.expectNext("""{"d":3}""")
+      output.request(1)
+      output.expectNext("""{"e":4}""")
+      output.request(1)
+      output.expectComplete()
+    }
   }
 
   "collecting json buffer" when {
@@ -144,6 +173,12 @@ class JsonFramingSpec extends AkkaSpec {
           val buffer = new JsonObjectParser()
           buffer.offer(ByteString("""{ "name": "john doe"}"""))
           buffer.poll().get.utf8String shouldBe """{ "name": "john doe"}"""
+        }
+
+        "successfully parse single field having string value containing single quote" in {
+          val buffer = new JsonObjectParser()
+          buffer.offer(ByteString("""{ "name": "john o'doe"}"""))
+          buffer.poll().get.utf8String shouldBe """{ "name": "john o'doe"}"""
         }
 
         "successfully parse single field having string value containing curly brace" in {
@@ -181,8 +216,8 @@ class JsonFramingSpec extends AkkaSpec {
 
         "successfully parse single field having decimal value" in {
           val buffer = new JsonObjectParser()
-          buffer.offer(ByteString("""{ "age": 101}"""))
-          buffer.poll().get.utf8String shouldBe """{ "age": 101}"""
+          buffer.offer(ByteString("""{ "age": 10.1}"""))
+          buffer.poll().get.utf8String shouldBe """{ "age": 10.1}"""
         }
 
         "successfully parse single field having nested object" in {

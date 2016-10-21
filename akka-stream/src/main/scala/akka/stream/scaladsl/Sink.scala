@@ -3,27 +3,24 @@
  */
 package akka.stream.scaladsl
 
-import java.util.{ Spliterators, Spliterator }
-import java.util.stream.StreamSupport
-
 import akka.{ Done, NotUsed }
 import akka.dispatch.ExecutionContexts
-import akka.actor.{ Status, ActorRef, Props }
+import akka.actor.{ ActorRef, Props, Status }
 import akka.stream.actor.ActorSubscriber
 import akka.stream.impl.Stages.DefaultAttributes
 import akka.stream.impl.StreamLayout.Module
 import akka.stream.impl._
-import akka.stream.stage.{ Context, PushStage, SyncDirective, TerminationDirective }
+import akka.stream.stage.{ GraphStage, GraphStageLogic, OutHandler, InHandler }
 import akka.stream.{ javadsl, _ }
 import org.reactivestreams.{ Publisher, Subscriber }
+
 import scala.annotation.tailrec
 import scala.collection.immutable
-import scala.concurrent.duration.Duration.Inf
-import scala.concurrent.{ Await, ExecutionContext, Future }
+import scala.concurrent.{ ExecutionContext, Future }
 import scala.util.{ Failure, Success, Try }
 
 /**
- * A `Sink` is a set of stream processing steps that has one open input and an attached output.
+ * A `Sink` is a set of stream processing steps that has one open input.
  * Can be used as a `Subscriber`
  */
 final class Sink[-In, +Mat](override val module: Module)
@@ -50,11 +47,14 @@ final class Sink[-In, +Mat](override val module: Module)
   def runWith[Mat2](source: Graph[SourceShape[In], Mat2])(implicit materializer: Materializer): Mat2 =
     Source.fromGraph(source).to(this).run()
 
+  /**
+   * Transform only the materialized value of this Sink, leaving all other properties as they were.
+   */
   def mapMaterializedValue[Mat2](f: Mat ⇒ Mat2): Sink[In, Mat2] =
     new Sink(module.transformMaterializedValue(f.asInstanceOf[Any ⇒ Any]))
 
   /**
-   * Change the attributes of this [[Source]] to the given ones and seal the list
+   * Change the attributes of this [[Sink]] to the given ones and seal the list
    * of attributes. This means that further calls will not be able to remove these
    * attributes, but instead add new ones. Note that this
    * operation has no effect on an empty Flow (because the attributes apply
@@ -64,7 +64,7 @@ final class Sink[-In, +Mat](override val module: Module)
     new Sink(module.withAttributes(attr))
 
   /**
-   * Add the given attributes to this Source. Further calls to `withAttributes`
+   * Add the given attributes to this Sink. Further calls to `withAttributes`
    * will not remove these attributes. Note that this
    * operation has no effect on an empty Flow (because the attributes apply
    * only to the contained processing stages).
@@ -73,7 +73,7 @@ final class Sink[-In, +Mat](override val module: Module)
     withAttributes(module.attributes and attr)
 
   /**
-   * Add a ``name`` attribute to this Flow.
+   * Add a ``name`` attribute to this Sink.
    */
   override def named(name: String): Sink[In, Mat] = addAttributes(Attributes.name(name))
 
@@ -82,7 +82,9 @@ final class Sink[-In, +Mat](override val module: Module)
    */
   override def async: Sink[In, Mat] = addAttributes(Attributes.asyncBoundary)
 
-  /** Converts this Scala DSL element to it's Java DSL counterpart. */
+  /**
+   * Converts this Scala DSL element to it's Java DSL counterpart.
+   */
   def asJava: javadsl.Sink[In, Mat] = new javadsl.Sink(this)
 }
 
@@ -228,7 +230,7 @@ object Sink {
    * [[akka.stream.Supervision.Resume]] or [[akka.stream.Supervision.Restart]] the
    * element is dropped and the stream continues.
    *
-   * @see [[#mapAsyncUnordered]]
+   * See also [[Flow.mapAsyncUnordered]]
    */
   def foreachParallel[T](parallelism: Int)(f: T ⇒ Unit)(implicit ec: ExecutionContext): Sink[T, Future[Done]] =
     Flow[T].mapAsyncUnordered(parallelism)(t ⇒ Future(f(t))).toMat(Sink.ignore)(Keep.right)
@@ -239,9 +241,22 @@ object Sink {
    * The returned [[scala.concurrent.Future]] will be completed with value of the final
    * function evaluation when the input stream ends, or completed with `Failure`
    * if there is a failure signaled in the stream.
+   *
+   * @see [[#foldAsync]]
    */
   def fold[U, T](zero: U)(f: (U, T) ⇒ U): Sink[T, Future[U]] =
     Flow[T].fold(zero)(f).toMat(Sink.head)(Keep.right).named("foldSink")
+
+  /**
+   * A `Sink` that will invoke the given asynchronous function for every received element, giving it its previous
+   * output (or the given `zero` value) and the element as input.
+   * The returned [[scala.concurrent.Future]] will be completed with value of the final
+   * function evaluation when the input stream ends, or completed with `Failure`
+   * if there is a failure signaled in the stream.
+   *
+   * @see [[#fold]]
+   */
+  def foldAsync[U, T](zero: U)(f: (U, T) ⇒ Future[U]): Sink[T, Future[U]] = Flow[T].foldAsync(zero)(f).toMat(Sink.head)(Keep.right).named("foldAsyncSink")
 
   /**
    * A `Sink` that will invoke the given function for every received element, giving it its previous
@@ -265,23 +280,35 @@ object Sink {
    */
   def onComplete[T](callback: Try[Done] ⇒ Unit): Sink[T, NotUsed] = {
 
-    def newOnCompleteStage(): PushStage[T, NotUsed] = {
-      new PushStage[T, NotUsed] {
-        override def onPush(elem: T, ctx: Context[NotUsed]): SyncDirective = ctx.pull()
+    def newOnCompleteStage(): GraphStage[FlowShape[T, NotUsed]] = {
+      new GraphStage[FlowShape[T, NotUsed]] {
 
-        override def onUpstreamFailure(cause: Throwable, ctx: Context[NotUsed]): TerminationDirective = {
-          callback(Failure(cause))
-          ctx.fail(cause)
-        }
+        val in = Inlet[T]("in")
+        val out = Outlet[NotUsed]("out")
+        override val shape = FlowShape.of(in, out)
 
-        override def onUpstreamFinish(ctx: Context[NotUsed]): TerminationDirective = {
-          callback(Success(Done))
-          ctx.finish()
-        }
+        override def createLogic(inheritedAttributes: Attributes): GraphStageLogic =
+          new GraphStageLogic(shape) with InHandler with OutHandler {
+
+            override def onPush(): Unit = pull(in)
+
+            override def onPull(): Unit = pull(in)
+
+            override def onUpstreamFailure(cause: Throwable): Unit = {
+              callback(Failure(cause))
+              failStage(cause)
+            }
+
+            override def onUpstreamFinish(): Unit = {
+              callback(Success(Done))
+              completeStage()
+            }
+
+            setHandlers(in, out, this)
+          }
       }
     }
-
-    Flow[T].transform(newOnCompleteStage).to(Sink.ignore).named("onCompleteSink")
+    Flow[T].via(newOnCompleteStage()).to(Sink.ignore).named("onCompleteSink")
   }
 
   /**
@@ -344,7 +371,7 @@ object Sink {
    * For stream completion you need to pull all elements from [[akka.stream.scaladsl.SinkQueue]] including last None
    * as completion marker
    *
-   * @see [[akka.stream.scaladsl.SinkQueueWithCancel]]
+   * See also [[akka.stream.scaladsl.SinkQueueWithCancel]]
    */
   def queue[T](): Sink[T, SinkQueueWithCancel[T]] =
     Sink.fromGraph(new QueueSink())

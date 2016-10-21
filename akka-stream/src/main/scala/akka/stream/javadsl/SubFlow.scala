@@ -173,8 +173,9 @@ class SubFlow[-In, +Out, +Mat](delegate: scaladsl.SubFlow[Out, Mat, scaladsl.Flo
   /**
    * Transform this stream by applying the given function to each of the elements
    * as they pass through this processing step. The function returns a `CompletionStage` and the
-   * value of that future will be emitted downstream. As many CompletionStages as requested elements by
-   * downstream may run in parallel and may complete in any order, but the elements that
+   * value of that future will be emitted downstream. The number of CompletionStages
+   * that shall run in parallel is given as the first argument to ``mapAsync``.
+   * These CompletionStages may complete in any order, but the elements that
    * are emitted downstream are in the same order as received from upstream.
    *
    * If the function `f` throws an exception or if the `CompletionStage` is completed
@@ -204,10 +205,10 @@ class SubFlow[-In, +Out, +Mat](delegate: scaladsl.SubFlow[Out, Mat, scaladsl.Flo
   /**
    * Transform this stream by applying the given function to each of the elements
    * as they pass through this processing step. The function returns a `CompletionStage` and the
-   * value of that future will be emitted downstream. As many CompletionStages as requested elements by
-   * downstream may run in parallel and each processed element will be emitted downstream
-   * as soon as it is ready, i.e. it is possible that the elements are not emitted downstream
-   * in the same order as received from upstream.
+   * value of that future will be emitted downstream. The number of CompletionStages
+   * that shall run in parallel is given as the first argument to ``mapAsyncUnordered``.
+   * Each processed element will be emitted downstream as soon as it is ready, i.e. it is possible
+   * that the elements are not emitted downstream in the same order as received from upstream.
    *
    * If the function `f` throws an exception or if the `CompletionStage` is completed
    * with failure and the supervision decision is [[akka.stream.Supervision#stop]]
@@ -387,6 +388,33 @@ class SubFlow[-In, +Out, +Mat](delegate: scaladsl.SubFlow[Out, Mat, scaladsl.Flo
     new SubFlow(delegate.scan(zero)(f.apply))
 
   /**
+   * Similar to `scan` but with a asynchronous function,
+   * emits its current value which starts at `zero` and then
+   * applies the current and next value to the given function `f`,
+   * emitting a `Future` that resolves to the next current value.
+   *
+   * If the function `f` throws an exception and the supervision decision is
+   * [[akka.stream.Supervision.Restart]] current value starts at `zero` again
+   * the stream will continue.
+   *
+   * If the function `f` throws an exception and the supervision decision is
+   * [[akka.stream.Supervision.Resume]] current value starts at the previous
+   * current value, or zero when it doesn't have one, and the stream will continue.
+   *
+   * '''Emits when''' the future returned by f` completes
+   *
+   * '''Backpressures when''' downstream backpressures
+   *
+   * '''Completes when''' upstream completes and the last future returned by `f` completes
+   *
+   * '''Cancels when''' downstream cancels
+   *
+   * See also [[FlowOps.scan]]
+   */
+  def scanAsync[T](zero: T)(f: function.Function2[T, Out, CompletionStage[T]]): SubFlow[In, T, Mat] =
+    new SubFlow(delegate.scanAsync(zero) { (out, in) ⇒ f(out, in).toScala })
+
+  /**
    * Similar to `scan` but only emits its result when the upstream completes,
    * after which it also completes. Applies the given function `f` towards its current and next value,
    * yielding the next current value.
@@ -405,6 +433,25 @@ class SubFlow[-In, +Out, +Mat](delegate: scaladsl.SubFlow[Out, Mat, scaladsl.Flo
    */
   def fold[T](zero: T)(f: function.Function2[T, Out, T]): SubFlow[In, T, Mat] =
     new SubFlow(delegate.fold(zero)(f.apply))
+
+  /**
+   * Similar to `fold` but with an asynchronous function.
+   * Applies the given function towards its current and next value,
+   * yielding the next current value.
+   *
+   * If the function `f` returns a failure and the supervision decision is
+   * [[akka.stream.Supervision.Restart]] current value starts at `zero` again
+   * the stream will continue.
+   *
+   * '''Emits when''' upstream completes
+   *
+   * '''Backpressures when''' downstream backpressures
+   *
+   * '''Completes when''' upstream completes
+   *
+   * '''Cancels when''' downstream cancels
+   */
+  def foldAsync[T](zero: T)(f: function.Function2[T, Out, CompletionStage[T]]): SubFlow[In, T, Mat] = new SubFlow(delegate.foldAsync(zero) { (out, in) ⇒ f(out, in).toScala })
 
   /**
    * Similar to `fold` but uses first element as zero element.
@@ -561,9 +608,9 @@ class SubFlow[-In, +Out, +Mat](delegate: scaladsl.SubFlow[Out, Mat, scaladsl.Flo
 
   /**
    * Terminate processing (and cancel the upstream publisher) after predicate
-   * returns false for the first time. Due to input buffering some elements may have been
-   * requested from upstream publishers that will then not be processed downstream
-   * of this step.
+   * returns false for the first time,
+   * Due to input buffering some elements may have been requested from upstream publishers
+   * that will then not be processed downstream of this step.
    *
    * The stream will be completed without producing any elements if predicate is false for
    * the first stream element.
@@ -572,12 +619,31 @@ class SubFlow[-In, +Out, +Mat](delegate: scaladsl.SubFlow[Out, Mat, scaladsl.Flo
    *
    * '''Backpressures when''' downstream backpressures
    *
-   * '''Completes when''' predicate returned false or upstream completes
+   * '''Completes when''' predicate returned false (or 1 after predicate returns false if `inclusive` or upstream completes
    *
    * '''Cancels when''' predicate returned false or downstream cancels
    */
-  def takeWhile(p: function.Predicate[Out]): SubFlow[In, Out, Mat] =
-    new SubFlow(delegate.takeWhile(p.test))
+  def takeWhile(p: function.Predicate[Out]): SubFlow[In, Out, Mat] = takeWhile(p, false)
+
+  /**
+   * Terminate processing (and cancel the upstream publisher) after predicate
+   * returns false for the first time, including the first failed element iff inclusive is true
+   * Due to input buffering some elements may have been requested from upstream publishers
+   * that will then not be processed downstream of this step.
+   *
+   * The stream will be completed without producing any elements if predicate is false for
+   * the first stream element.
+   *
+   * '''Emits when''' the predicate is true
+   *
+   * '''Backpressures when''' downstream backpressures
+   *
+   * '''Completes when''' predicate returned false (or 1 after predicate returns false if `inclusive` or upstream completes
+   *
+   * '''Cancels when''' predicate returned false or downstream cancels
+   */
+  def takeWhile(p: function.Predicate[Out], inclusive: Boolean): SubFlow[In, Out, Mat] =
+    new SubFlow(delegate.takeWhile(p.test, inclusive))
 
   /**
    * Discard elements at the beginning of the stream while predicate is true.
@@ -964,6 +1030,31 @@ class SubFlow[-In, +Out, +Mat](delegate: scaladsl.SubFlow[Out, Mat, scaladsl.Flo
     new SubFlow(delegate.prepend(that))
 
   /**
+   * Provides a secondary source that will be consumed if this source completes without any
+   * elements passing by. As soon as the first element comes through this stream, the alternative
+   * will be cancelled.
+   *
+   * Note that this Flow will be materialized together with the [[Source]] and just kept
+   * from producing elements by asserting back-pressure until its time comes or it gets
+   * cancelled.
+   *
+   * On errors the stage is failed regardless of source of the error.
+   *
+   * '''Emits when''' element is available from first stream or first stream closed without emitting any elements and an element
+   *                  is available from the second stream
+   *
+   * '''Backpressures when''' downstream backpressures
+   *
+   * '''Completes when''' the primary stream completes after emitting at least one element, when the primary stream completes
+   *                      without emitting and the secondary stream already has completed or when the secondary stream completes
+   *
+   * '''Cancels when''' downstream cancels and additionally the alternative is cancelled as soon as an element passes
+   *                    by from this stream.
+   */
+  def orElse[T >: Out, M](secondary: Graph[SourceShape[T], M]): javadsl.SubFlow[In, T, Mat] =
+    new SubFlow(delegate.orElse(secondary))
+
+  /**
    * Attaches the given [[Sink]] to this [[Flow]], meaning that elements that passes
    * through will also be sent to the [[Sink]].
    *
@@ -1067,6 +1158,21 @@ class SubFlow[-In, +Out, +Mat](delegate: scaladsl.SubFlow[Out, Mat, scaladsl.Flo
     that:    Graph[SourceShape[Out2], _],
     combine: function.Function2[Out, Out2, Out3]): SubFlow[In, Out3, Mat] =
     new SubFlow(delegate.zipWith[Out2, Out3](that)(combinerToScala(combine)))
+
+  /**
+   * Combine the elements of current [[Flow]] into a stream of tuples consisting
+   * of all elements paired with their index. Indices start at 0.
+   *
+   * '''Emits when''' upstream emits an element and is paired with their index
+   *
+   * '''Backpressures when''' downstream backpressures
+   *
+   * '''Completes when''' upstream completes
+   *
+   * '''Cancels when''' downstream cancels
+   */
+  def zipWithIndex: SubFlow[In, akka.japi.Pair[Out @uncheckedVariance, Long], Mat] =
+    new SubFlow(delegate.zipWithIndex.map { case (elem, index) ⇒ akka.japi.Pair(elem, index) })
 
   /**
    * If the first element has not passed through this stage before the provided timeout, the stream is failed

@@ -19,9 +19,9 @@ class FlowFoldSpec extends StreamSpec {
   "A Fold" must {
     val input = 1 to 100
     val expected = input.sum
-    val inputSource = Source(input).filter(_ ⇒ true).map(identity)
-    val foldSource = inputSource.fold[Int](0)(_ + _).filter(_ ⇒ true).map(identity)
-    val foldFlow = Flow[Int].filter(_ ⇒ true).map(identity).fold(0)(_ + _).filter(_ ⇒ true).map(identity)
+    val inputSource = Source(input)
+    val foldSource = inputSource.fold[Int](0)(_ + _)
+    val foldFlow = Flow[Int].fold(0)(_ + _)
     val foldSink = Sink.fold[Int, Int](0)(_ + _)
 
     "work when using Source.runFold" in assertAllStagesStopped {
@@ -54,6 +54,14 @@ class FlowFoldSpec extends StreamSpec {
       val error = new Exception with NoStackTrace
       val future = inputSource.runFold(0)((x, y) ⇒ if (x > 50) throw error else x + y)
       the[Exception] thrownBy Await.result(future, 3.seconds) should be(error)
+    }
+
+    "complete future and return zero given an empty stream" in assertAllStagesStopped {
+      val futureValue =
+        Source.fromIterator[Int](() ⇒ Iterator.empty)
+          .runFold(0)(_ + _)
+
+      Await.result(futureValue, 3.seconds) should be(0)
     }
 
   }

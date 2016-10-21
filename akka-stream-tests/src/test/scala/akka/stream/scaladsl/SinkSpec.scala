@@ -11,7 +11,6 @@ import java.util.stream.{ Collector, Collectors }
 import akka.stream._
 import akka.stream.testkit.Utils._
 import akka.stream.testkit._
-import org.scalactic.ConversionCheckedTripleEquals
 import akka.testkit.DefaultTimeout
 import org.scalatest.concurrent.ScalaFutures
 import scala.concurrent.{ Await, Future }
@@ -127,7 +126,10 @@ class SinkSpec extends StreamSpec with DefaultTimeout with ScalaFutures {
 
     "suitably override attribute handling methods" in {
       import Attributes._
-      val s: Sink[Int, Future[Int]] = Sink.head[Int].async.addAttributes(none).named("")
+      val s: Sink[Int, Future[Int]] = Sink.head[Int].async.addAttributes(none).named("name")
+
+      s.module.attributes.getFirst[Name] shouldEqual Some(Name("name"))
+      s.module.attributes.getFirst[AsyncBoundary.type] shouldEqual (Some(AsyncBoundary))
     }
 
     "support contramap" in {
@@ -136,7 +138,6 @@ class SinkSpec extends StreamSpec with DefaultTimeout with ScalaFutures {
   }
 
   "Java collector Sink" must {
-    import scala.compat.java8.FunctionConverters._
 
     class TestCollector(
       _supplier:    () ⇒ Supplier[Array[Int]],

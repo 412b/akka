@@ -3,10 +3,9 @@
  */
 package akka.stream.scaladsl
 
-import akka.event.{ Logging, LoggingAdapter }
+import akka.event.LoggingAdapter
 import akka.stream._
 import akka.Done
-import akka.stream.impl.Stages.DefaultAttributes
 import akka.stream.impl.StreamLayout.Module
 import akka.stream.impl._
 import akka.stream.impl.fusing._
@@ -356,7 +355,11 @@ final case class RunnableGraph[+Mat](val module: StreamLayout.Module) extends Gr
   override def withAttributes(attr: Attributes): RunnableGraph[Mat] =
     new RunnableGraph(module.withAttributes(attr))
 
-  override def named(name: String): RunnableGraph[Mat] = withAttributes(Attributes.name(name))
+  override def named(name: String): RunnableGraph[Mat] =
+    addAttributes(Attributes.name(name))
+
+  override def async: RunnableGraph[Mat] =
+    addAttributes(Attributes.asyncBoundary)
 }
 
 /**
@@ -556,10 +559,10 @@ trait FlowOps[+Out, +Mat] {
   /**
    * Transform this stream by applying the given function to each of the elements
    * as they pass through this processing step. The function returns a `Future` and the
-   * value of that future will be emitted downstream. As many futures as requested elements by
-   * downstream may run in parallel and each processed element will be emitted downstream
-   * as soon as it is ready, i.e. it is possible that the elements are not emitted downstream
-   * in the same order as received from upstream.
+   * value of that future will be emitted downstream. The number of Futures
+   * that shall run in parallel is given as the first argument to ``mapAsyncUnordered``.
+   * Each processed element will be emitted downstream as soon as it is ready, i.e. it is possible
+   * that the elements are not emitted downstream in the same order as received from upstream.
    *
    * If the function `f` throws an exception or if the `Future` is completed
    * with failure and the supervision decision is [[akka.stream.Supervision.Stop]]
@@ -613,9 +616,9 @@ trait FlowOps[+Out, +Mat] {
 
   /**
    * Terminate processing (and cancel the upstream publisher) after predicate
-   * returns false for the first time. Due to input buffering some elements may have been
-   * requested from upstream publishers that will then not be processed downstream
-   * of this step.
+   * returns false for the first time,
+   * Due to input buffering some elements may have been requested from upstream publishers
+   * that will then not be processed downstream of this step.
    *
    * The stream will be completed without producing any elements if predicate is false for
    * the first stream element.
@@ -624,13 +627,34 @@ trait FlowOps[+Out, +Mat] {
    *
    * '''Backpressures when''' downstream backpressures
    *
-   * '''Completes when''' predicate returned false or upstream completes
+   * '''Completes when''' predicate returned false (or 1 after predicate returns false if `inclusive` or upstream completes
    *
    * '''Cancels when''' predicate returned false or downstream cancels
    *
    * See also [[FlowOps.limit]], [[FlowOps.limitWeighted]]
    */
-  def takeWhile(p: Out ⇒ Boolean): Repr[Out] = via(TakeWhile(p))
+  def takeWhile(p: Out ⇒ Boolean): Repr[Out] = takeWhile(p, false)
+
+  /**
+   * Terminate processing (and cancel the upstream publisher) after predicate
+   * returns false for the first time, including the first failed element iff inclusive is true
+   * Due to input buffering some elements may have been requested from upstream publishers
+   * that will then not be processed downstream of this step.
+   *
+   * The stream will be completed without producing any elements if predicate is false for
+   * the first stream element.
+   *
+   * '''Emits when''' the predicate is true
+   *
+   * '''Backpressures when''' downstream backpressures
+   *
+   * '''Completes when''' predicate returned false (or 1 after predicate returns false if `inclusive` or upstream completes
+   *
+   * '''Cancels when''' predicate returned false or downstream cancels
+   *
+   * See also [[FlowOps.limit]], [[FlowOps.limitWeighted]]
+   */
+  def takeWhile(p: Out ⇒ Boolean, inclusive: Boolean): Repr[Out] = via(TakeWhile(p, inclusive))
 
   /**
    * Discard elements at the beginning of the stream while predicate is true.
@@ -758,8 +782,36 @@ trait FlowOps[+Out, +Mat] {
    * '''Completes when''' upstream completes
    *
    * '''Cancels when''' downstream cancels
+   *
+   * See also [[FlowOps.scanAsync]]
    */
   def scan[T](zero: T)(f: (T, Out) ⇒ T): Repr[T] = via(Scan(zero, f))
+
+  /**
+   * Similar to `scan` but with a asynchronous function,
+   * emits its current value which starts at `zero` and then
+   * applies the current and next value to the given function `f`,
+   * emitting a `Future` that resolves to the next current value.
+   *
+   * If the function `f` throws an exception and the supervision decision is
+   * [[akka.stream.Supervision.Restart]] current value starts at `zero` again
+   * the stream will continue.
+   *
+   * If the function `f` throws an exception and the supervision decision is
+   * [[akka.stream.Supervision.Resume]] current value starts at the previous
+   * current value, or zero when it doesn't have one, and the stream will continue.
+   *
+   * '''Emits when''' the future returned by f` completes
+   *
+   * '''Backpressures when''' downstream backpressures
+   *
+   * '''Completes when''' upstream completes and the last future returned by `f` completes
+   *
+   * '''Cancels when''' downstream cancels
+   *
+   * See also [[FlowOps.scan]]
+   */
+  def scanAsync[T](zero: T)(f: (T, Out) ⇒ Future[T]): Repr[T] = via(ScanAsync(zero, f))
 
   /**
    * Similar to `scan` but only emits its result when the upstream completes,
@@ -781,6 +833,27 @@ trait FlowOps[+Out, +Mat] {
    * See also [[FlowOps.scan]]
    */
   def fold[T](zero: T)(f: (T, Out) ⇒ T): Repr[T] = via(Fold(zero, f))
+
+  /**
+   * Similar to `fold` but with an asynchronous function.
+   * Applies the given function towards its current and next value,
+   * yielding the next current value.
+   *
+   * If the function `f` returns a failure and the supervision decision is
+   * [[akka.stream.Supervision.Restart]] current value starts at `zero` again
+   * the stream will continue.
+   *
+   * '''Emits when''' upstream completes
+   *
+   * '''Backpressures when''' downstream backpressures
+   *
+   * '''Completes when''' upstream completes
+   *
+   * '''Cancels when''' downstream cancels
+   *
+   * See also [[FlowOps.fold]]
+   */
+  def foldAsync[T](zero: T)(f: (T, Out) ⇒ Future[T]): Repr[T] = via(new FoldAsync(zero, f))
 
   /**
    * Similar to `fold` but uses first element as zero element.
@@ -1632,6 +1705,29 @@ trait FlowOps[+Out, +Mat] {
     }
 
   /**
+   * Combine the elements of current flow into a stream of tuples consisting
+   * of all elements paired with their index. Indices start at 0.
+   *
+   * '''Emits when''' upstream emits an element and is paired with their index
+   *
+   * '''Backpressures when''' downstream backpressures
+   *
+   * '''Completes when''' upstream completes
+   *
+   * '''Cancels when''' downstream cancels
+   */
+  def zipWithIndex: Repr[(Out, Long)] = {
+    statefulMapConcat[(Out, Long)] { () ⇒
+      var index: Long = 0L
+      elem ⇒ {
+        val zipped = (elem, index)
+        index += 1
+        immutable.Iterable[(Out, Long)](zipped)
+      }
+    }
+  }
+
+  /**
    * Interleave is a deterministic merge of the given [[Source]] with elements of this [[Flow]].
    * It first emits `segmentSize` number of elements from this flow to downstream, then - same amount for `that`
    * source, then repeat process.
@@ -1770,6 +1866,40 @@ trait FlowOps[+Out, +Mat] {
     }
 
   /**
+   * Provides a secondary source that will be consumed if this stream completes without any
+   * elements passing by. As soon as the first element comes through this stream, the alternative
+   * will be cancelled.
+   *
+   * Note that this Flow will be materialized together with the [[Source]] and just kept
+   * from producing elements by asserting back-pressure until its time comes or it gets
+   * cancelled.
+   *
+   * On errors the stage is failed regardless of source of the error.
+   *
+   * '''Emits when''' element is available from first stream or first stream closed without emitting any elements and an element
+   *                  is available from the second stream
+   *
+   * '''Backpressures when''' downstream backpressures
+   *
+   * '''Completes when''' the primary stream completes after emitting at least one element, when the primary stream completes
+   *                      without emitting and the secondary stream already has completed or when the secondary stream completes
+   *
+   * '''Cancels when''' downstream cancels and additionally the alternative is cancelled as soon as an element passes
+   *                    by from this stream.
+   */
+  def orElse[U >: Out, Mat2](secondary: Graph[SourceShape[U], Mat2]): Repr[U] =
+    via(orElseGraph(secondary))
+
+  protected def orElseGraph[U >: Out, Mat2](secondary: Graph[SourceShape[U], Mat2]): Graph[FlowShape[Out @uncheckedVariance, U], Mat2] =
+    GraphDSL.create(secondary) { implicit b ⇒ secondary ⇒
+      val orElse = b.add(OrElse[U]())
+
+      secondary ~> orElse.in(1)
+
+      FlowShape(orElse.in(0), orElse.out)
+    }
+
+  /**
    * Concatenates this [[Flow]] with the given [[Source]] so the first element
    * emitted by that source is emitted after the last element of this
    * flow.
@@ -1827,7 +1957,7 @@ trait FlowOps[+Out, +Mat] {
 
   /**
    * Put an asynchronous boundary around this `Flow`.
-   * 
+   *
    * If this is a `SubFlow` (created e.g. by `groupBy`), this creates an
    * asynchronous boundary around each materialized sub-flow, not the
    * super-flow. That way, the super-flow will communicate with sub-flows
@@ -2006,6 +2136,31 @@ trait FlowOpsMat[+Out, +Mat] extends FlowOps[Out, Mat] {
    */
   def prependMat[U >: Out, Mat2, Mat3](that: Graph[SourceShape[U], Mat2])(matF: (Mat, Mat2) ⇒ Mat3): ReprMat[U, Mat3] =
     viaMat(prependGraph(that))(matF)
+
+  /**
+   * Provides a secondary source that will be consumed if this stream completes without any
+   * elements passing by. As soon as the first element comes through this stream, the alternative
+   * will be cancelled.
+   *
+   * Note that this Flow will be materialized together with the [[Source]] and just kept
+   * from producing elements by asserting back-pressure until its time comes or it gets
+   * cancelled.
+   *
+   * On errors the stage is failed regardless of source of the error.
+   *
+   * '''Emits when''' element is available from first stream or first stream closed without emitting any elements and an element
+   *                  is available from the second stream
+   *
+   * '''Backpressures when''' downstream backpressures
+   *
+   * '''Completes when''' the primary stream completes after emitting at least one element, when the primary stream completes
+   *                      without emitting and the secondary stream already has completed or when the secondary stream completes
+   *
+   * '''Cancels when''' downstream cancels and additionally the alternative is cancelled as soon as an element passes
+   *                    by from this stream.
+   */
+  def orElseMat[U >: Out, Mat2, Mat3](secondary: Graph[SourceShape[U], Mat2])(matF: (Mat, Mat2) ⇒ Mat3): ReprMat[U, Mat3] =
+    viaMat(orElseGraph(secondary))(matF)
 
   /**
    * Attaches the given [[Sink]] to this [[Flow]], meaning that elements that passes

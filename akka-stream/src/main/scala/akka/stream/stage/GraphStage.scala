@@ -19,6 +19,7 @@ import akka.stream.actor.ActorSubscriberMessage
 
 abstract class GraphStageWithMaterializedValue[+S <: Shape, +M] extends Graph[S, M] {
 
+  @throws(classOf[Exception])
   def createLogicAndMaterializedValue(inheritedAttributes: Attributes): (GraphStageLogic, M)
 
   protected def initialAttributes: Attributes = Attributes.none
@@ -42,6 +43,7 @@ abstract class GraphStage[S <: Shape] extends GraphStageWithMaterializedValue[S,
   final override def createLogicAndMaterializedValue(inheritedAttributes: Attributes): (GraphStageLogic, NotUsed) =
     (createLogic(inheritedAttributes), NotUsed)
 
+  @throws(classOf[Exception])
   def createLogic(inheritedAttributes: Attributes): GraphStageLogic
 }
 
@@ -341,8 +343,8 @@ abstract class GraphStageLogic private[stream] (val inCount: Int, val outCount: 
    */
   final protected def pull[T](in: Inlet[T]): Unit = {
     val connection = conn(in)
-    val portState = connection.portState
     val it = interpreter
+    val portState = connection.portState
 
     if ((portState & (InReady | InClosed | OutClosed)) == InReady) {
       connection.portState = portState ^ PullStartFlip
@@ -439,8 +441,8 @@ abstract class GraphStageLogic private[stream] (val inCount: Int, val outCount: 
    */
   final protected def push[T](out: Outlet[T], elem: T): Unit = {
     val connection = conn(out)
-    val portState = connection.portState
     val it = interpreter
+    val portState = connection.portState
 
     connection.portState = portState ^ PushStartFlip
 
@@ -453,8 +455,8 @@ abstract class GraphStageLogic private[stream] (val inCount: Int, val outCount: 
 
       // Detailed error information should not add overhead to the hot path
       ReactiveStreamsCompliance.requireNonNullElement(elem)
-      require(isAvailable(out), s"Cannot push port ($out) twice")
       require(!isClosed(out), s"Cannot pull closed port ($out)")
+      require(isAvailable(out), s"Cannot push port ($out) twice")
 
       // No error, just InClosed caused the actual pull to be ignored, but the status flag still needs to be flipped
       connection.portState = portState ^ PushStartFlip
@@ -907,7 +909,7 @@ abstract class GraphStageLogic private[stream] (val inCount: Int, val outCount: 
    * The messages are looped through the [[getAsyncCallback]] mechanism of [[GraphStage]] so they are safe to modify
    * internal state of this stage.
    *
-   * This method must not (the earliest) be called after the [[GraphStageLogic]] constructor has finished running,
+   * This method must (the earliest) be called after the [[GraphStageLogic]] constructor has finished running,
    * for example from the [[preStart]] callback the graph stage logic provides.
    *
    * Created [[StageActorRef]] to get messages and watch other actors in synchronous way.
@@ -948,11 +950,13 @@ abstract class GraphStageLogic private[stream] (val inCount: Int, val outCount: 
   /**
    * Invoked before any external events are processed, at the startup of the stage.
    */
+  @throws(classOf[Exception])
   def preStart(): Unit = ()
 
   /**
    * Invoked after processing of external events stopped because the stage is about to stop or fail.
    */
+  @throws(classOf[Exception])
   def postStop(): Unit = ()
 
   /**
@@ -1155,6 +1159,7 @@ abstract class TimerGraphStageLogic(_shape: Shape) extends GraphStageLogic(_shap
    *
    * @param timerKey key of the scheduled timer
    */
+  @throws(classOf[Exception])
   protected def onTimer(timerKey: Any): Unit = ()
 
   // Internal hooks to avoid reliance on user calling super in postStop
