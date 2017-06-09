@@ -508,7 +508,7 @@ abstract class ShardCoordinator(typeName: String, settings: ClusterShardingSetti
         }
       }
 
-    case AllocateShardResult(shard, None, getShardHomeSender) ⇒
+    case AllocateShardResult(shard, None, _) ⇒
       log.debug("Shard [{}] allocation failed. It will be retried.", shard)
 
     case AllocateShardResult(shard, Some(region), getShardHomeSender) ⇒
@@ -587,7 +587,7 @@ abstract class ShardCoordinator(typeName: String, settings: ClusterShardingSetti
             address → stats
         }.toMap)
       }.recover {
-        case x: AskTimeoutException ⇒ ShardRegion.ClusterShardingStats(Map.empty)
+        case _: AskTimeoutException ⇒ ShardRegion.ClusterShardingStats(Map.empty)
       }.pipeTo(sender())
 
     case ShardHome(_, _) ⇒
@@ -768,9 +768,9 @@ class PersistentShardCoordinator(typeName: String, settings: ClusterShardingSett
     case evt: DomainEvent ⇒
       log.debug("receiveRecover {}", evt)
       evt match {
-        case ShardRegionRegistered(region) ⇒
+        case _: ShardRegionRegistered ⇒
           state = state.updated(evt)
-        case ShardRegionProxyRegistered(proxy) ⇒
+        case _: ShardRegionProxyRegistered ⇒
           state = state.updated(evt)
         case ShardRegionTerminated(region) ⇒
           if (state.regions.contains(region))
@@ -783,7 +783,7 @@ class PersistentShardCoordinator(typeName: String, settings: ClusterShardingSett
         case ShardRegionProxyTerminated(proxy) ⇒
           if (state.regionProxies.contains(proxy))
             state = state.updated(evt)
-        case ShardHomeAllocated(shard, region) ⇒
+        case _: ShardHomeAllocated ⇒
           state = state.updated(evt)
         case _: ShardHomeDeallocated ⇒
           state = state.updated(evt)
@@ -881,7 +881,7 @@ class DDataShardCoordinator(typeName: String, settings: ClusterShardingSettings,
   val CoordinatorStateKey = LWWRegisterKey[State](s"${typeName}CoordinatorState")
   val initEmptyState = State.empty.withRememberEntities(settings.rememberEntities)
 
-  val AllShardsKey = GSetKey[String](s"shard-${typeName}-all")
+  val AllShardsKey = GSetKey[String](s"shard-$typeName-all")
   val allKeys: Set[Key[ReplicatedData]] =
     if (rememberEntities) Set(CoordinatorStateKey, AllShardsKey) else Set(CoordinatorStateKey)
 
@@ -1018,7 +1018,7 @@ class DDataShardCoordinator(typeName: String, settings: ClusterShardingSettings,
     unstashAll()
   }
 
-  def activate() = {
+  def activate(): Unit = {
     context.become(active)
     log.info("Sharding Coordinator was moved to the active state {}", state)
   }

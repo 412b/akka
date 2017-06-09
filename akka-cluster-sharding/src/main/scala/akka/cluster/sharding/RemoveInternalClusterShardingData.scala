@@ -62,7 +62,7 @@ object RemoveInternalClusterShardingData {
       println("Specify the Cluster Sharding type names to remove in program arguments")
     else {
       val system = ActorSystem("RemoveInternalClusterShardingData")
-      val remove2dot3Data = (args(0) == "-2.3")
+      val remove2dot3Data = args(0) == "-2.3"
       val typeNames = if (remove2dot3Data) args.tail.toSet else args.toSet
       if (typeNames.isEmpty)
         println("Specify the Cluster Sharding type names to remove in program arguments")
@@ -87,7 +87,7 @@ object RemoveInternalClusterShardingData {
       if (journalPluginId == "") system.settings.config.getString("akka.persistence.journal.plugin")
       else journalPluginId
     if (resolvedJournalPluginId == "akka.persistence.journal.leveldb-shared") {
-      val store = system.actorOf(Props[SharedLeveldbStore], "store")
+      val store = system.actorOf(Props[SharedLeveldbStore](), "store")
       SharedLeveldbJournal.setStore(store, system)
     }
 
@@ -130,7 +130,7 @@ object RemoveInternalClusterShardingData {
     var hasSnapshots = false
 
     override def receiveRecover: Receive = {
-      case event: ShardCoordinator.Internal.DomainEvent ⇒
+      case _: ShardCoordinator.Internal.DomainEvent ⇒
 
       case SnapshotOffer(_, _) ⇒
         hasSnapshots = true
@@ -188,7 +188,7 @@ class RemoveInternalClusterShardingData(journalPluginId: String, typeNames: Set[
 
   var currentPid: String = _
   var currentRef: ActorRef = _
-  var remainingPids = typeNames.map(persistenceId) ++
+  var remainingPids: Set[String] = typeNames.map(persistenceId) ++
     (if (remove2dot3Data) typeNames.map(persistenceId2dot3) else Set.empty)
 
   def persistenceId(typeName: String): String = s"/sharding/${typeName}Coordinator"
@@ -207,7 +207,7 @@ class RemoveInternalClusterShardingData(journalPluginId: String, typeNames: Set[
     remainingPids -= currentPid
   }
 
-  def receive = {
+  def receive: Receive = {
     case Result(Success(_)) ⇒
       log.info("Removed data for persistenceId [{}]", currentPid)
       if (remainingPids.isEmpty) done()

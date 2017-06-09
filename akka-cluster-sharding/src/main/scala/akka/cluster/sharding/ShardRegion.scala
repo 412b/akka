@@ -5,21 +5,21 @@ package akka.cluster.sharding
 
 import java.net.URLEncoder
 
-import akka.pattern.AskTimeoutException
-import akka.util.{ MessageBufferMap, Timeout }
-import akka.pattern.{ ask, pipe }
-import akka.actor._
-import akka.cluster.Cluster
-import akka.cluster.ClusterEvent._
-import akka.cluster.Member
-import akka.cluster.MemberStatus
-
 import scala.collection.immutable
 import scala.concurrent.duration._
 import scala.concurrent.Future
 import scala.reflect.ClassTag
 import scala.concurrent.Promise
+
 import akka.Done
+import akka.actor._
+import akka.cluster.Cluster
+import akka.cluster.ClusterEvent._
+import akka.cluster.Member
+import akka.cluster.MemberStatus
+import akka.pattern.AskTimeoutException
+import akka.pattern.{ ask, pipe }
+import akka.util.{ MessageBufferMap, Timeout }
 
 /**
  * @see [[ClusterSharding$ ClusterSharding extension]]
@@ -128,7 +128,7 @@ object ShardRegion {
 
     override def shardId(message: Any): String = {
       val id = message match {
-        case ShardRegion.StartEntity(id) ⇒ id
+        case se: ShardRegion.StartEntity ⇒ se.entityId
         case _                           ⇒ entityId(message)
       }
       (math.abs(id.hashCode) % maxNumberOfShards).toString
@@ -449,7 +449,7 @@ private[akka] class ShardRegion(
     }
   }
 
-  def receive = {
+  def receive: Receive = {
     case Terminated(ref)                         ⇒ receiveTerminated(ref)
     case ShardInitialized(shardId)               ⇒ initializeShard(shardId, sender())
     case evt: ClusterDomainEvent                 ⇒ receiveClusterEvent(evt)
@@ -627,7 +627,7 @@ private[akka] class ShardRegion(
         case (shardId, state) ⇒ ShardRegion.ShardState(shardId, state.entityIds)
       }.toSet)
     }.recover {
-      case x: AskTimeoutException ⇒ CurrentShardRegionState(Set.empty)
+      case _: AskTimeoutException ⇒ CurrentShardRegionState(Set.empty)
     }.pipeTo(ref)
   }
 
@@ -637,7 +637,7 @@ private[akka] class ShardRegion(
         case (shardId, stats) ⇒ (shardId, stats.entityCount)
       }.toMap)
     }.recover {
-      case x: AskTimeoutException ⇒ ShardRegionStats(Map.empty)
+      case _: AskTimeoutException ⇒ ShardRegionStats(Map.empty)
     }.pipeTo(ref)
   }
 
@@ -684,7 +684,7 @@ private[akka] class ShardRegion(
     deliverBufferedMessages(id, shard)
   }
 
-  def bufferMessage(shardId: ShardId, msg: Any, snd: ActorRef) = {
+  def bufferMessage(shardId: ShardId, msg: Any, snd: ActorRef): Unit = {
     val totBufSize = shardBuffers.totalSize
     if (totBufSize >= bufferSize) {
       if (loggedFullBufferWarning)

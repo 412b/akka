@@ -5,35 +5,33 @@ package akka.cluster.sharding
 
 import java.net.URLEncoder
 
+import scala.concurrent.Future
+import scala.concurrent.duration.FiniteDuration
+
+import akka.actor.Actor
 import akka.actor.ActorLogging
 import akka.actor.ActorRef
 import akka.actor.ActorSystem
 import akka.actor.Deploy
+import akka.actor.NoSerializationVerificationNeeded
 import akka.actor.Props
+import akka.actor.Stash
 import akka.actor.Terminated
-import akka.cluster.sharding.Shard.ShardCommand
-import akka.actor.Actor
-
-import akka.util.MessageBufferMap
-import scala.concurrent.Future
-import scala.concurrent.duration.FiniteDuration
 import akka.cluster.Cluster
 import akka.cluster.ddata.ORSet
 import akka.cluster.ddata.ORSetKey
 import akka.cluster.ddata.Replicator._
-import akka.actor.Stash
-import akka.cluster.ddata.DistributedData
-import akka.persistence.PersistentActor
-import akka.persistence.SnapshotOffer
-import akka.persistence.SaveSnapshotSuccess
-import akka.persistence.DeleteSnapshotsFailure
-import akka.persistence.DeleteMessagesSuccess
-import akka.persistence.SaveSnapshotFailure
 import akka.persistence.DeleteMessagesFailure
+import akka.persistence.DeleteMessagesSuccess
+import akka.persistence.DeleteSnapshotsFailure
 import akka.persistence.DeleteSnapshotsSuccess
-import akka.persistence.SnapshotSelectionCriteria
+import akka.persistence.PersistentActor
 import akka.persistence.RecoveryCompleted
-import akka.actor.NoSerializationVerificationNeeded
+import akka.persistence.SaveSnapshotFailure
+import akka.persistence.SaveSnapshotSuccess
+import akka.persistence.SnapshotOffer
+import akka.persistence.SnapshotSelectionCriteria
+import akka.util.MessageBufferMap
 
 /**
  * INTERNAL API
@@ -165,7 +163,7 @@ private[akka] class Shard(
   def processChange[E <: StateChange](event: E)(handler: E ⇒ Unit): Unit =
     handler(event)
 
-  def receive = receiveCommand
+  def receive: Receive = receiveCommand
 
   def receiveCommand: Receive = {
     case Terminated(ref)                         ⇒ receiveTerminated(ref)
@@ -366,7 +364,6 @@ private[akka] class RememberEntityStarter(
   requestor: ActorRef) extends Actor with ActorLogging {
 
   import context.dispatcher
-  import scala.concurrent.duration._
   import RememberEntityStarter.Tick
 
   var waitingForAck = ids
@@ -382,7 +379,7 @@ private[akka] class RememberEntityStarter(
     ids.foreach(id ⇒ region ! ShardRegion.StartEntity(id))
   }
 
-  override def receive = {
+  override def receive: Receive = {
     case ack: ShardRegion.StartEntityAck ⇒
       waitingForAck -= ack.entityId
       // inform whoever requested the start that it happened
@@ -483,7 +480,6 @@ private[akka] class PersistentShard(
   typeName, shardId, entityProps, settings, extractEntityId, extractShardId, handOffStopMessage)
   with RememberingShard with PersistentActor with ActorLogging {
 
-  import ShardRegion.{ EntityId, Msg }
   import Shard._
   import settings.tuningParameters._
 
@@ -496,7 +492,7 @@ private[akka] class PersistentShard(
   // would be initialized after recovery completed
   override def initialized(): Unit = {}
 
-  override def receive = receiveCommand
+  override def receive: Receive = receiveCommand
 
   override def processChange[E <: StateChange](event: E)(handler: E ⇒ Unit): Unit = {
     saveSnapshotWhenNeeded()
@@ -579,7 +575,7 @@ private[akka] class DDataShard(
   typeName, shardId, entityProps, settings, extractEntityId, extractShardId, handOffStopMessage)
   with RememberingShard with Stash with ActorLogging {
 
-  import ShardRegion.{ EntityId, Msg }
+  import ShardRegion.EntityId
   import Shard._
   import settings.tuningParameters._
 
@@ -599,10 +595,10 @@ private[akka] class DDataShard(
   // configuration on each node.
   private val numberOfKeys = 5
   private val stateKeys: Array[ORSetKey[EntityId]] =
-    Array.tabulate(numberOfKeys)(i ⇒ ORSetKey[EntityId](s"shard-${typeName}-${shardId}-$i"))
+    Array.tabulate(numberOfKeys)(i ⇒ ORSetKey[EntityId](s"shard-$typeName-$shardId-$i"))
 
   private def key(entityId: EntityId): ORSetKey[EntityId] = {
-    val i = (math.abs(entityId.hashCode) % numberOfKeys)
+    val i = math.abs(entityId.hashCode) % numberOfKeys
     stateKeys(i)
   }
 
@@ -610,7 +606,7 @@ private[akka] class DDataShard(
   getState()
 
   private def getState(): Unit = {
-    (0 until numberOfKeys).map { i ⇒
+    (0 until numberOfKeys).foreach { i ⇒
       replicator ! Get(stateKeys(i), readMajority, Some(i))
     }
   }
@@ -618,7 +614,7 @@ private[akka] class DDataShard(
   // would be initialized after recovery completed
   override def initialized(): Unit = {}
 
-  override def receive = waitingForState(Set.empty)
+  override def receive: Receive = waitingForState(Set.empty)
 
   // This state will stash all commands
   private def waitingForState(gotKeys: Set[Int]): Receive = {

@@ -6,7 +6,10 @@ package akka.cluster.sharding
 import java.net.URLEncoder
 import java.util.Optional
 import java.util.concurrent.ConcurrentHashMap
+
 import scala.concurrent.Await
+import scala.util.control.NonFatal
+
 import akka.actor.Actor
 import akka.actor.ActorRef
 import akka.actor.ActorSystem
@@ -18,17 +21,15 @@ import akka.actor.ExtensionIdProvider
 import akka.actor.NoSerializationVerificationNeeded
 import akka.actor.PoisonPill
 import akka.actor.Props
+import akka.actor.Status
 import akka.cluster.Cluster
-import akka.cluster.ddata.DistributedData
-import akka.cluster.singleton.ClusterSingletonManager
-import akka.pattern.BackoffSupervisor
-import akka.util.ByteString
-import akka.pattern.ask
-import akka.dispatch.Dispatchers
 import akka.cluster.ddata.ReplicatorSettings
 import akka.cluster.ddata.Replicator
-import scala.util.control.NonFatal
-import akka.actor.Status
+import akka.cluster.singleton.ClusterSingletonManager
+import akka.dispatch.Dispatchers
+import akka.pattern.BackoffSupervisor
+import akka.pattern.ask
+import akka.util.ByteString
 
 /**
  * This extension provides sharding functionality of actors in a cluster.
@@ -143,7 +144,7 @@ import akka.actor.Status
 object ClusterSharding extends ExtensionId[ClusterSharding] with ExtensionIdProvider {
   override def get(system: ActorSystem): ClusterSharding = super.get(system)
 
-  override def lookup = ClusterSharding
+  override def lookup(): ExtensionId[ClusterSharding] = ClusterSharding
 
   override def createExtension(system: ExtendedActorSystem): ClusterSharding =
     new ClusterSharding(system)
@@ -449,7 +450,7 @@ private[akka] class ClusterShardingGuardian extends Actor {
       context.system.deadLetters
   }
 
-  def receive = {
+  def receive: Receive = {
     case Start(typeName, entityProps, settings, extractEntityId, extractShardId, allocationStrategy, handOffStopMessage) ⇒
       try {
         import settings.role
