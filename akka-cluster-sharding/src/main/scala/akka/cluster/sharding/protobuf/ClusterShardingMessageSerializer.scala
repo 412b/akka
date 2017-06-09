@@ -3,25 +3,24 @@
  */
 package akka.cluster.sharding.protobuf
 
-import java.io.{ ByteArrayInputStream, ByteArrayOutputStream }
+import java.io.{ ByteArrayInputStream, ByteArrayOutputStream, NotSerializableException }
 import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
 
 import scala.annotation.tailrec
 import scala.collection.JavaConverters._
 import scala.collection.breakOut
+
 import akka.actor.ActorRef
 import akka.actor.ExtendedActorSystem
 import akka.cluster.sharding.Shard
 import akka.cluster.sharding.ShardCoordinator
+import akka.cluster.sharding.ShardRegion.{ StartEntity, StartEntityAck }
 import akka.cluster.sharding.protobuf.msg.{ ClusterShardingMessages ⇒ sm }
+import akka.protobuf.MessageLite
 import akka.serialization.BaseSerializer
 import akka.serialization.Serialization
 import akka.serialization.SerializerWithStringManifest
-import akka.protobuf.MessageLite
-import java.io.NotSerializableException
-
-import akka.cluster.sharding.ShardRegion.{ StartEntity, StartEntityAck }
 
 /**
  * INTERNAL API: Protobuf serializer of ClusterSharding messages.
@@ -178,10 +177,6 @@ private[akka] class ClusterShardingMessageSerializer(val system: ExtendedActorSy
     }
 
   private def coordinatorStateToProto(state: State): sm.CoordinatorState = {
-    val regions = state.regions.map {
-      case (regionRef, _) ⇒ Serialization.serializedActorPath(regionRef)
-    }.toVector.asJava
-
     val builder = sm.CoordinatorState.newBuilder()
 
     state.shards.foreach {
