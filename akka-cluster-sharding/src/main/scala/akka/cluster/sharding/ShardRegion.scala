@@ -457,7 +457,7 @@ private[akka] class ShardRegion(
     case msg: CoordinatorMessage                 ⇒ receiveCoordinatorMessage(msg)
     case cmd: ShardRegionCommand                 ⇒ receiveCommand(cmd)
     case query: ShardRegionQuery                 ⇒ receiveQuery(query)
-    case msg: RestartShard                       ⇒ deliverMessage(msg, sender())
+    case msg: RestartShard                       ⇒ deliverRestartShard(msg, sender())
     case msg: StartEntity                        ⇒ deliverStartEntity(msg, sender())
     case msg if extractEntityId.isDefinedAt(msg) ⇒ deliverMessage(msg, sender())
     case unknownMsg                              ⇒ log.warning("Message does not have an extractor defined in shard [{}] so it was ignored: {}", typeName, unknownMsg)
@@ -729,50 +729,50 @@ private[akka] class ShardRegion(
     }
   }
 
-  def deliverMessage(msg: Any, snd: ActorRef): Unit =
-    msg match {
-      case RestartShard(shardId) ⇒
-        regionByShard.get(shardId) match {
-          case Some(ref) ⇒
-            if (ref == self)
-              getShard(shardId)
-          case None ⇒
-            if (!shardBuffers.contains(shardId)) {
-              log.debug("Request shard [{}] home", shardId)
-              coordinator.foreach(_ ! GetShardHome(shardId))
-            }
-            val buf = shardBuffers.getOrEmpty(shardId)
-            log.debug("Buffer message for shard [{}]. Total [{}] buffered messages.", shardId, buf.size + 1)
-            shardBuffers.append(shardId, msg, snd)
+  private[this] def deliverRestartShard(msg: RestartShard, snd: ActorRef): Unit = {
+    val shardId = msg.shardId
+    regionByShard.get(shardId) match {
+      case Some(ref) ⇒
+        if (ref == self)
+          getShard(shardId)
+      case None ⇒
+        if (!shardBuffers.contains(shardId)) {
+          log.debug("Request shard [{}] home", shardId)
+          coordinator.foreach(_ ! GetShardHome(shardId))
         }
-
-      case _ ⇒
-        val shardId = extractShardId(msg)
-        regionByShard.get(shardId) match {
-          case Some(ref) if ref == self ⇒
-            getShard(shardId) match {
-              case Some(shard) ⇒
-                if (shardBuffers.contains(shardId)) {
-                  // Since now messages to a shard is buffered then those messages must be in right order
-                  bufferMessage(shardId, msg, snd)
-                  deliverBufferedMessages(shardId, shard)
-                } else shard.tell(msg, snd)
-              case None ⇒ bufferMessage(shardId, msg, snd)
-            }
-          case Some(ref) ⇒
-            log.debug("Forwarding request for shard [{}] to [{}]", shardId, ref)
-            ref.tell(msg, snd)
-          case None if shardId == null || shardId == "" ⇒
-            log.warning("Shard must not be empty, dropping message [{}]", msg.getClass.getName)
-            context.system.deadLetters ! msg
-          case None ⇒
-            if (!shardBuffers.contains(shardId)) {
-              log.debug("Request shard [{}] home", shardId)
-              coordinator.foreach(_ ! GetShardHome(shardId))
-            }
-            bufferMessage(shardId, msg, snd)
-        }
+        val buf = shardBuffers.getOrEmpty(shardId)
+        log.debug("Buffer message for shard [{}]. Total [{}] buffered messages.", shardId, buf.size + 1)
+        shardBuffers.append(shardId, msg, snd)
     }
+  }
+
+  def deliverMessage(msg: Any, snd: ActorRef): Unit = {
+    val shardId = extractShardId(msg)
+    regionByShard.get(shardId) match {
+      case Some(ref) if ref == self ⇒
+        getShard(shardId) match {
+          case Some(shard) ⇒
+            if (shardBuffers.contains(shardId)) {
+              // Since now messages to a shard is buffered then those messages must be in right order
+              bufferMessage(shardId, msg, snd)
+              deliverBufferedMessages(shardId, shard)
+            } else shard.tell(msg, snd)
+          case None ⇒ bufferMessage(shardId, msg, snd)
+        }
+      case Some(ref) ⇒
+        log.debug("Forwarding request for shard [{}] to [{}]", shardId, ref)
+        ref.tell(msg, snd)
+      case None if shardId == null || shardId == "" ⇒
+        log.warning("Shard must not be empty, dropping message [{}]", msg.getClass.getName)
+        context.system.deadLetters ! msg
+      case None ⇒
+        if (!shardBuffers.contains(shardId)) {
+          log.debug("Request shard [{}] home", shardId)
+          coordinator.foreach(_ ! GetShardHome(shardId))
+        }
+        bufferMessage(shardId, msg, snd)
+    }
+  }
 
   def getShard(id: ShardId): Option[ActorRef] = {
     if (startingShards.contains(id))
